@@ -1,0 +1,95 @@
+%% Map_LandSea_Boxes.m
+%  只画海陆分布 + 子区域方框（无 SST、无风场），版式与
+%  Composite_SSTUV_HiLow_GrangerNinoIOD_4Season.m 的四季图一致：
+%    - 经度 20°E 起始（20–380），纬度 60°S–60°N
+%    - 同一套方框（TNA / NTIO / WTIO / ETIO / WPWP / Nino3.4 / EP）及颜色
+%    - 同一个大陆轮廓 shapefile（找不到时退回 MATLAB coastlines）
+%    - 面板尺寸、位置与原图单个面板相同（18 × 18 cm 页面左侧 9 cm），
+%      方框图例放在面板上方
+%  陆地用 MATLAB 自带 topo（1°）填灰色，海洋为白色
+clear; clc;
+
+%% ---- 设置 ----
+cut      = 20;                     % 经度起点（°E）
+latlim   = [-60 60];
+land_col = [0.80 0.80 0.80];       % 陆地填色
+sea_col  = [1 1 1];                % 海洋填色
+fs       = 10;
+show_box_labels = false;           % true：在方框旁直接标名字（另加于上方图例）
+out_dir  = '.';
+
+boxes = struct( ...
+ 'name',{'TNA','NTIO','WTIO','ETIO','WPWP','Nino3.4','EP'}, ...
+ 'lon',{[305 345],[40 115],[50 70],[90 110],[120 180],[190 240],[210 270]}, ...
+ 'lat',{[5 25],[0 20],[-10 10],[-10 0],[-5 5],[-5 5],[-5 5]}, ...
+ 'color',{[0 0 0],[0 .447 .741],[.20 .65 .20],[.929 .694 .125], ...
+          [.635 .078 .984],[.850 .125 .098],[.1 .75 .85]});
+
+%% ---- 海陆掩膜（topo，1°）----
+load topo                                   % topo: 180 x 360, lat -89.5:89.5, lon 0.5:359.5
+tlat = (-89.5:89.5)';  tlon = 0.5:359.5;
+ord  = [find(tlon >= cut), find(tlon < cut)];
+xlon = tlon(ord);  xlon(xlon < cut) = xlon(xlon < cut) + 360;
+land = double(topo(:, ord) > 0);            % 1 = 陆地, 0 = 海洋
+il   = tlat >= latlim(1)-1 & tlat <= latlim(2)+1;
+
+%% ---- 大陆轮廓 ----
+shp = 'C:\Users\yingy\Downloads\D\FengYingying\FengYingyingData\MapData\GLOBALSHP\ContinentsPoly.shp';
+if isfile(shp) && exist('shaperead','file') == 2
+    coast = shaperead(shp, 'UseGeoCoords', true);
+else
+    tmp = load('coastlines');
+    coast = struct('Lon', tmp.coastlon, 'Lat', tmp.coastlat);
+    warning('Using MATLAB coastlines: continent shapefile or shaperead unavailable.');
+end
+
+%% ---- 图例文字（彩色方框名）----
+legend_str = '';
+for ib = 1:numel(boxes)
+    cc = boxes(ib).color;
+    legend_str = [legend_str, sprintf('\\color[rgb]{%.4f,%.4f,%.4f}%s   ', ...
+        cc(1), cc(2), cc(3), boxes(ib).name)]; %#ok<AGROW>
+end
+
+%% ---- 画图 ----
+fig = figure('Units','centimeters', 'Position',[1 1 18 18], ...
+    'PaperPosition',[0 0 18 18], 'PaperSize',[18 18], 'Color','w');
+pos = [.075 .735 .405 .155];               % 与原四季图 panel a 相同
+
+annotation(fig, 'textbox', [.045 .905 .45 .025], 'String', legend_str, ...
+    'Interpreter','tex', 'FontSize',fs, 'FontName','Helvetica', ...
+    'HorizontalAlignment','center', 'EdgeColor','none');
+
+ax = axes('Parent', fig, 'Position', pos);  hold(ax, 'on');
+xx = [xlon(end)-360, xlon, xlon(1)+360];   % 周期补边，避免切口处空白
+zz = [land(il,end), land(il,:), land(il,1)];
+imagesc(ax, xx, tlat(il), zz);
+colormap(ax, [sea_col; land_col]);  caxis(ax, [0 1]);
+
+for ip = 1:numel(coast)
+    px = coast(ip).Lon(:);  py = coast(ip).Lat(:);
+    jump = [false; abs(diff(px)) > 180];  px(jump) = NaN;  py(jump) = NaN;
+    for shift = [-360 0 360 720]
+        plot(ax, px+shift, py, 'Color', [.2 .2 .2], 'LineWidth', .4);
+    end
+end
+
+for ib = 1:numel(boxes)
+    bx = boxes(ib);
+    rectangle(ax, 'Position', [bx.lon(1) bx.lat(1) diff(bx.lon) diff(bx.lat)], ...
+        'EdgeColor', bx.color, 'LineWidth', .8, 'FaceColor', 'none');
+    if show_box_labels
+        text(ax, bx.lon(1), bx.lat(2)+1.5, bx.name, 'Color', bx.color, ...
+            'FontName','Helvetica', 'FontSize', fs-2, 'VerticalAlignment','bottom');
+    end
+end
+
+set(ax, 'YDir','normal', 'XLim',[cut cut+360], 'YLim',latlim, ...
+    'XTick',[60 120 180 240 300], 'XTickLabel',{'60 E','120 E','180','120 W','60 W'}, ...
+    'YTick',[-60 -30 0 30 60], 'YTickLabel',{'60 S','30 S','0','30 N','60 N'}, ...
+    'TickDir','out', 'TickLength',[.008 0], 'FontName','Helvetica', 'FontSize',fs, ...
+    'Layer','top', 'LineWidth',.8, 'Box','on');
+
+exportgraphics(fig, fullfile(out_dir, 'map_landsea_boxes.tif'), 'Resolution', 600);
+exportgraphics(fig, fullfile(out_dir, 'map_landsea_boxes.png'), 'Resolution', 600);
+fprintf('Saved map_landsea_boxes.tif / .png\n');
