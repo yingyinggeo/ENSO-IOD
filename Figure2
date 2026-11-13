@@ -1,0 +1,232 @@
+%% Fig_Nino_IOD_Granger_members_trends.m
+%
+% 按审稿/导师意见修改原 Figure_Nino_IOD_MME_v1：
+%   "you would not expect the interannual variability to look the same
+%    (especially when averaging the LME members), so I wonder if there is a
+%    way to plot these that highlights the common trends you mention, plus
+%    the causality."
+%
+% 改动要点（数据读取与指数计算部分与原脚本完全相同）：
+%   1. 不再只画集合平均：15 个 LME 成员各画一条细线，集合平均为粗蓝线，
+%      HadISST 为粗橙线（原图观测是很浅的灰线，看不清）。
+%      → 观测与单个成员才是可比的（都是"一次实现"），集合平均本来就更平滑。
+%   2. (a)(c) Niño3.4、IOD 先做 SMOOTH_YR 年滑动平均，去掉年际波动，
+%      突出年代际变化和长期趋势；(e) Granger 因果本身就是 31 年窗口，不再平滑。
+%   3. 每个时间序列面板叠加集合平均与观测的线性趋势线，并标注趋势值和 p 值。
+%      趋势用未平滑的逐年序列计算；p 值按残差 lag-1 自相关修正有效样本数
+%      （Bretherton et al. 1999），Granger 序列来自重叠窗口，修正尤其必要。
+%   4. 右侧新增 (b)(d)(f)：15 个成员的趋势分布（圆点 + 最小–最大竖线），
+%      集合平均趋势（蓝菱形）与观测趋势（橙星），直接回答
+%      "观测的趋势是否落在模式成员范围内"。
+%   5. 页面 18 cm × 18 cm，字号 10。
+%
+% 时段：显示与趋势计算均为 1900–2005（与正文修改后的时段一致）；
+%       Granger 窗口中心只到 1990（31 年窗口两端各缺 15 年）。
+%
+% Peng
+clear; clc; close all;
+
+%% ==================== 0. 设置 ====================
+data_dir   = 'C:\Users\yingy\Downloads\Data\Paleo3bs_Project';
+lme_file   = fullfile(data_dir, 'sst_idx_850-2005_ILME_FULL_15ens.mat');
+obs_file   = fullfile(data_dir, 'sst_idx_1870-2005_Hadisst_UCSB_region.mat');
+g_dir      = data_dir;   % Granger 结果文件也在同一文件夹
+g_lme_file = fullfile(g_dir, 'Revise_Granger_NINOIOD_30yr_1870-2005_LME.mat');
+g_obs_file = fullfile(g_dir, 'Revise_Granger_NINOIOD_30yr_obs_1870_2005.mat');
+out_name   = 'Figure_Nino_IOD_members_trends';
+
+YR_PLOT   = [1900 2005];      % 横轴范围
+TREND_WIN = [1900 2005];      % 趋势计算时段
+SMOOTH_YR = 11;               % (a)(c) 滑动平均窗口（年）；设为 1 则不平滑
+
+c_mem  = [0.72 0.80 0.90];    % 成员细线
+c_mean = [0 116 195]/255;     % 集合平均
+c_obs  = [0.85 0.33 0.10];    % 观测
+fs = 10;
+
+%% ==================== 1. LME 指数（与原脚本相同）====================
+load(lme_file)
+sst_idx_real = sst_idx;
+sst_idx_real(:,1:5,:)  = sst_idx_real(:,1:5,:)  - 273.15;
+sst_idx_real(:,7:11,:) = sst_idx_real(:,7:11,:) - 273.15;
+
+data_series = nan(1156,8,15);
+for irun = 1:size(sst_idx_real,3)
+    sst_idx_run = sst_idx_real(:,:,irun);
+    % Nino3.4 (DJF, 5 个月滑动平均)
+    Nino_mon_re = reshape(sst_idx_run(:,1),12,size(sst_idx_run,1)./12);
+    Nino_cli = nanmean(Nino_mon_re(:,1021:1156),2);
+    Nino_ano = Nino_mon_re - repmat(Nino_cli,1,1156);
+    Nino_mov_re = reshape(movmean(reshape(Nino_ano,12*1156,1),5),12,1156);
+    Nino_series = squeeze(nanmean([Nino_mov_re(12,1:end-1);Nino_mov_re(1:2,2:end)],1))';
+    % IOD (SON)
+    WTIO_mon_re = reshape(sst_idx_run(:,4),12,size(sst_idx_run,1)./12);
+    ETIO_mon_re = reshape(sst_idx_run(:,5),12,size(sst_idx_run,1)./12);
+    IOD_series  = nanmean(WTIO_mon_re(9:11,:),1)' - nanmean(ETIO_mon_re(9:11,:),1)';
+
+    data_series(1:end-1,1,irun) = Nino_series;
+    data_series(:,6,irun)       = IOD_series;
+end
+clearvars -except data_series lme_file obs_file g_lme_file g_obs_file out_name ...
+    YR_PLOT TREND_WIN SMOOTH_YR c_mem c_mean c_obs fs
+
+%% ==================== 2. HadISST 指数（与原脚本相同）====================
+load(obs_file, 'sst_idx_obs');
+sst_idx_run = sst_idx_obs(:,1:11);  clear sst_idx_obs
+Nino_mon_re = reshape(sst_idx_run(:,1),12,size(sst_idx_run,1)./12);
+Nino_ano    = Nino_mon_re - repmat(nanmean(Nino_mon_re,2),1,136);
+Nino_ano_fn = reshape(movmean(reshape(Nino_ano,12*136,1),5),12,136);
+Nino_obs    = squeeze(nanmean([Nino_ano_fn(12,1:end-1);Nino_ano_fn(1:2,2:end)],1))';
+WTIO_mon_re = reshape(sst_idx_run(:,4),12,size(sst_idx_run,1)./12);
+ETIO_mon_re = reshape(sst_idx_run(:,5),12,size(sst_idx_run,1)./12);
+IOD_obs     = nanmean(WTIO_mon_re(9:11,:),1)' - nanmean(ETIO_mon_re(9:11,:),1)';
+
+%% ==================== 3. 整理三行数据 ====================
+% 行 1：Niño3.4（与原图相同：1871–2005，LME 行 1021:1155）
+R(1).yrs = (1871:2005)';
+R(1).M   = squeeze(data_series(1021:1155,1,:));
+R(1).o   = Nino_obs;
+R(1).smooth = SMOOTH_YR;
+R(1).name = 'Ni\~no3.4 (DJF)';   R(1).unit = '\circC';  R(1).ylab = 'SSTA (\circC)';
+
+% 行 2：IOD（与原图相同：各自减去时段平均）
+tmp = squeeze(data_series(1021:1156,6,:));  tmp(tmp==0) = NaN;
+R(2).yrs = (1870:2005)';
+R(2).M   = tmp - repmat(nanmean(tmp,1), size(tmp,1), 1);
+tob = IOD_obs;  tob(tob==0) = NaN;
+R(2).o   = tob - nanmean(tob);
+R(2).smooth = SMOOTH_YR;
+R(2).name = 'IOD (SON)';  R(2).unit = '\circC';  R(2).ylab = 'SSTA (\circC)';
+
+% 行 3：ENSO→IOD Granger 因果（与原图相同：各减去总平均）
+S = load(g_lme_file, 'F21');  LME = S.F21;
+S = load(g_obs_file, 'F21');  Obs = S.F21(:);
+R(3).yrs = (1870:2005)';
+R(3).M   = LME - nanmean(LME(:));
+R(3).o   = Obs - nanmean(Obs);
+R(3).smooth = 1;
+R(3).name = 'ENSO \rightarrow IOD Granger causality (31-yr window)';
+R(3).unit = '';  R(3).ylab = 'G-causality';
+
+%% ==================== 4. 平滑 + 趋势 ====================
+fprintf('\n%-10s %12s %12s %12s %10s\n', 'Index', 'Obs trend', 'LME mean', 'Member range', 'Obs rank');
+for k = 1:3
+    yrs = R(k).yrs;  nm = size(R(k).M, 2);
+    R(k).Ms = smooth_cols(R(k).M, R(k).smooth);
+    R(k).os = smooth_cols(R(k).o, R(k).smooth);
+    R(k).ms = mean(R(k).Ms, 2, 'omitnan');
+
+    in = yrs >= TREND_WIN(1) & yrs <= TREND_WIN(2);
+    [R(k).b_obs,  R(k).p_obs ] = trend_ar1(yrs(in), R(k).o(in));
+    [R(k).b_mean, R(k).p_mean] = trend_ar1(yrs(in), mean(R(k).M(in,:), 2, 'omitnan'));
+    R(k).b_mem = NaN(nm, 1);
+    for im = 1:nm
+        R(k).b_mem(im) = trend_ar1(yrs(in), R(k).M(in,im));
+    end
+    R(k).rank = sum(R(k).b_mem < R(k).b_obs);       % 有几个成员趋势小于观测
+    fprintf('%-10s %+12.4f %+12.4f  [%+.4f, %+.4f] %6d/%d  (per century)\n', ...
+        strtok(strrep(R(k).name,'\',''),' '), 100*R(k).b_obs, 100*R(k).b_mean, ...
+        100*min(R(k).b_mem), 100*max(R(k).b_mem), R(k).rank, nm);
+end
+
+%% ==================== 5. 画图：18 × 18 cm ====================
+fig = figure('Units','centimeters', 'Position',[1 1 18 18], ...
+    'PaperUnits','centimeters', 'PaperSize',[18 18], 'PaperPosition',[0 0 18 18], 'Color','w');
+x_main = 0.11;  w_main = 0.60;  x_side = 0.81;  w_side = 0.15;
+h = 0.24;  y_rows = [0.70 0.40 0.10];
+L = 'abcdef';
+
+for k = 1:3
+    yrs = R(k).yrs;
+    in  = yrs >= TREND_WIN(1) & yrs <= TREND_WIN(2);
+
+    %% ---- 主图：时间序列 ----
+    ax = axes('Position', [x_main y_rows(k) w_main h]);  hold(ax, 'on');
+    hm = plot(ax, yrs, R(k).Ms, '-', 'Color', c_mem, 'LineWidth', 0.5);
+    hE = plot(ax, yrs, R(k).ms, '-', 'Color', c_mean, 'LineWidth', 1.8);
+    hO = plot(ax, yrs, R(k).os, '-', 'Color', c_obs,  'LineWidth', 1.8);
+    % 趋势线（基于未平滑序列）
+    t = yrs(in);
+    ym = mean(R(k).M(in,:), 2, 'omitnan');  okm = isfinite(ym);
+    yo = R(k).o(in);                        oko = isfinite(yo);
+    plot(ax, t(okm), mean(ym(okm)) + R(k).b_mean*(t(okm)-mean(t(okm))), '--', 'Color', c_mean, 'LineWidth', 1.2);
+    plot(ax, t(oko), mean(yo(oko)) + R(k).b_obs *(t(oko)-mean(t(oko))), '--', 'Color', c_obs,  'LineWidth', 1.2);
+    plot(ax, YR_PLOT, [0 0], ':', 'Color', [0.5 0.5 0.5], 'LineWidth', 0.5);
+
+    % 趋势与 p 值标注（每百年）
+    u = R(k).unit;  if ~isempty(u); u = [u ' ']; end
+    text(ax, 0.02, 0.97, sprintf('Obs: %+.3f %scentury^{-1} (p = %.2f)', 100*R(k).b_obs, u, R(k).p_obs), ...
+        'Units','normalized', 'Color', c_obs, 'FontSize', fs-1, 'VerticalAlignment','top');
+    text(ax, 0.02, 0.84, sprintf('LME mean: %+.3f %scentury^{-1} (p = %.2f)', 100*R(k).b_mean, u, R(k).p_mean), ...
+        'Units','normalized', 'Color', c_mean, 'FontSize', fs-1, 'VerticalAlignment','top');
+
+    allv = [R(k).Ms(:); R(k).os(:)];
+    allv = allv(isfinite(allv) & yrs(mod((0:numel(allv)-1)', numel(yrs))+1) >= YR_PLOT(1));
+    set(ax, 'XLim', YR_PLOT, 'YLim', pad_lim(allv, 0.35), 'XTick', 1900:20:2000, ...
+        'TickDir','out', 'TickLength',[0.015 0], 'FontName','Helvetica', 'FontSize', fs, ...
+        'Box','on', 'Layer','top');
+    if k < 3; set(ax, 'XTickLabel', []); else; xlabel(ax, 'Year', 'FontSize', fs); end
+    ylabel(ax, R(k).ylab, 'FontSize', fs);
+    title(ax, sprintf('(%c) %s', L(2*k-1), R(k).name), 'Interpreter','tex', ...
+        'FontSize', fs, 'FontWeight','bold', 'Units','normalized', ...
+        'Position',[0 1.02 0], 'HorizontalAlignment','left');
+    if k == 1
+        sm_txt = sprintf(' (%d-yr running mean)', SMOOTH_YR);
+        if SMOOTH_YR <= 1; sm_txt = ''; end
+        legend(ax, [hm(1) hE hO], {['LME members' sm_txt], 'LME ensemble mean', 'HadISST'}, ...
+            'Orientation','horizontal', 'Box','off', 'FontSize', fs-1, ...
+            'Position', [x_main 0.955 w_main+0.2 0.03]);
+    end
+
+    %% ---- 右图：趋势分布 ----
+    as = axes('Position', [x_side y_rows(k) w_side h]);  hold(as, 'on');
+    bm = 100*R(k).b_mem;  bo = 100*R(k).b_obs;  be = 100*R(k).b_mean;
+    plot(as, [1 1], [min(bm) max(bm)], '-', 'Color', c_mem*0.8, 'LineWidth', 2);
+    jit = 0.12*linspace(-1, 1, numel(bm))';
+    plot(as, 1 + jit, bm, 'o', 'MarkerSize', 3.5, 'MarkerEdgeColor', c_mean, 'MarkerFaceColor', 'none');
+    plot(as, 1, be, 'd', 'MarkerSize', 6, 'MarkerFaceColor', c_mean, 'MarkerEdgeColor', 'k');
+    plot(as, 2, bo, 'p', 'MarkerSize', 10, 'MarkerFaceColor', c_obs, 'MarkerEdgeColor', 'k');
+    plot(as, [0.5 2.5], [0 0], ':', 'Color', [0.5 0.5 0.5]);
+    set(as, 'XLim', [0.5 2.5], 'XTick', [1 2], 'XTickLabel', {'LME','Obs'}, ...
+        'YLim', pad_lim([bm; bo], 0.15), 'TickDir','out', 'TickLength',[0.04 0], ...
+        'FontName','Helvetica', 'FontSize', fs, 'Box','on');
+    if isempty(R(k).unit)
+        ylabel(as, 'Trend (century^{-1})', 'FontSize', fs);
+    else
+        ylabel(as, ['Trend (' R(k).unit ' century^{-1})'], 'FontSize', fs);
+    end
+    title(as, sprintf('(%c)', L(2*k)), 'FontSize', fs, 'FontWeight','bold', ...
+        'Units','normalized', 'Position',[0 1.02 0], 'HorizontalAlignment','left');
+end
+
+exportgraphics(gcf, [out_name '.tif'], 'Resolution', 600, 'BackgroundColor', 'white');
+exportgraphics(gcf, [out_name '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+
+%% ==================== 子函数 ====================
+function Y = smooth_cols(X, w)
+% 逐列滑动平均；两端不足一个窗口处设为 NaN；w<=1 不平滑
+if w <= 1; Y = X; return; end
+Y = movmean(X, w, 1, 'omitnan', 'Endpoints', 'fill');
+Y(isnan(X)) = NaN;
+end
+
+function [b, p] = trend_ar1(t, y)
+% OLS 线性趋势（每年）+ 双侧 t 检验；有效样本数按残差 lag-1 自相关修正
+t = t(:);  y = y(:);  ok = isfinite(y);  t = t(ok);  y = y(ok);  n = numel(y);
+if n < 5; b = NaN; p = NaN; return; end
+tc = t - mean(t);
+b = sum(tc.*(y - mean(y))) / sum(tc.^2);
+res = y - mean(y) - b*tc;
+r1 = corr(res(1:end-1), res(2:end));  r1 = max(r1, 0);
+neff = max(n*(1 - r1)/(1 + r1), 3);
+se = sqrt(sum(res.^2)/(neff - 2) / sum(tc.^2));
+p = 2*(1 - tcdf(abs(b/se), neff - 2));
+end
+
+function lim = pad_lim(v, frac)
+v = v(isfinite(v));
+if isempty(v); lim = [-1 1]; return; end
+lo = min(v);  hi = max(v);
+if hi == lo; lo = lo - 1; hi = hi + 1; end
+d = hi - lo;  lim = [lo - 0.05*d, hi + frac*d];   % 上方多留空间放标注
+end
