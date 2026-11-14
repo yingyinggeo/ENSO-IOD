@@ -1,0 +1,123 @@
+%% Fig_PDF_Granger_ENSOIOD_pre_post1850.m
+%  ENSO→IOD Granger 因果强度（F21）在 1850 年前后的概率密度分布对比
+%  3 行 × 2 列，页面 18 × 18 cm：
+%    (a)   Pre-1850（850–1849 全部）       vs Post-1850（1850–2005）
+%    (b–f) Pre-1850 中随机选取的连续 150 年 vs Post-1850，5 次重复
+%          → 检验 (a) 的差异是否只是因为两段时间长度不同（1000 年 vs 156 年）
+%
+%  取样：只取不重叠的 31 年窗口（每隔 31 年取一个窗口中心），15 个成员合并
+%    - (a) 与 Post-1850：窗口中心从第一个有效窗口（第 16 行 = 865 年）起每隔
+%      31 年，与旧脚本 i = 16:31:985 的取法一致
+%    - (b–f) 随机 150 年段：窗口中心从该段起始年起每隔 31 年（每段 5 个窗口）
+%  F21：1156 × 15（年份 850–2005 × 15 个 LME 成员）
+%  检验：KS（分布形状）与 Wilcoxon 秩和（中位数），样本为不重叠窗口，近似独立
+clear; clc; close all;
+
+%% ---- 设置 ----
+g_file   = 'C:\Users\yingy\Downloads\Data\Paleo3bs_Project\Granger_NINOIOD_30yr.mat';
+yr0      = 850;                 % F21 第 1 行对应的年份
+split_y  = 1850;                % 分界年份
+STEP     = 31;                  % 不重叠窗口间隔（年）
+SEG_LEN  = 150;                 % 随机段长度（年）
+N_REP    = 5;                   % 随机重复次数
+SEED     = 2026;                % 随机种子（固定后结果可重复；改数字可换一组随机段）
+xgrid    = linspace(0, 0.3, 601);
+c_pre    = [0 0.447 0.741];     % 蓝
+c_post   = [0.86 0.08 0.24];    % 红
+fs       = 10;
+out_name = 'Fig_PDF_Granger_ENSOIOD_pre_post1850_random150';
+
+%% ---- 读数据 ----
+S = load(g_file, 'F21');
+F = S.F21;                                       % 1156 x 15
+years = yr0 + (0:size(F,1)-1)';
+valid = any(isfinite(F), 2);
+fv = find(valid, 1);                             % 第一个有效窗口（应为第 16 行）
+lv = find(valid, 1, 'last');
+fprintf('F21: %d x %d；有效窗口中心 %d–%d\n', size(F,1), size(F,2), years(fv), years(lv));
+
+grid_rows = (fv:STEP:size(F,1))';                % 全局不重叠窗口
+pick = @(rows) reshape(F(rows,:), [], 1);
+
+% Post-1850（全局网格上 >= 1850 的窗口）
+rows_post = grid_rows(years(grid_rows) >= split_y);
+post = pick(rows_post);  post = post(isfinite(post));
+
+% (a) Pre-1850 全部
+rows_pre = grid_rows(years(grid_rows) < split_y);
+pre_all = pick(rows_pre);  pre_all = pre_all(isfinite(pre_all));
+
+% (b–f) 随机 150 年段：段内全部落在 [第一个有效年, 1849]
+rng(SEED);
+st_min = years(fv);  st_max = split_y - SEG_LEN;
+seg_start = st_min + randperm(st_max - st_min + 1, N_REP)' - 1;
+seg_start = sort(seg_start);
+
+P = struct([]);
+P(1).pre = pre_all;
+P(1).lab = sprintf('Pre-%d', split_y);
+P(1).ttl = sprintf('%d–%d vs %d–%d', years(fv), split_y-1, split_y, years(lv));
+for r = 1:N_REP
+    s0 = seg_start(r);  s1 = s0 + SEG_LEN - 1;
+    rr = find(years == s0) : STEP : find(years == s1);
+    v = pick(rr);  v = v(isfinite(v));
+    P(r+1).pre = v;
+    P(r+1).lab = sprintf('%d–%d', s0, s1);
+    P(r+1).ttl = sprintf('Random 150 yr (%d) vs %d–%d', r, split_y, years(lv));
+end
+
+%% ---- 统计 ----
+fprintf('\n%-6s %-12s %6s %8s %8s %8s %8s\n', 'Panel', 'Pre period', 'n_pre', 'mu_pre', 'mu_post', 'p_KS', 'p_RS');
+ymax = 0;
+for k = 1:numel(P)
+    P(k).mu_pre  = mean(P(k).pre);
+    P(k).mu_post = mean(post);
+    [~, P(k).p_ks] = kstest2(P(k).pre, post);
+    P(k).p_rs = ranksum(P(k).pre, post);
+    P(k).f_pre  = ksdensity(P(k).pre, xgrid);
+    P(k).f_post = ksdensity(post,     xgrid);
+    ymax = max([ymax, P(k).f_pre, P(k).f_post]);
+    fprintf('%-6c %-12s %6d %8.4f %8.4f %8.3g %8.3g\n', 'a'+k-1, P(k).lab, numel(P(k).pre), ...
+        P(k).mu_pre, P(k).mu_post, P(k).p_ks, P(k).p_rs);
+end
+fprintf('Post-%d: n = %d（%d 个窗口 × %d 成员）\n', split_y, numel(post), numel(rows_post), size(F,2));
+ylim_all = [0 5*ceil(1.15*ymax/5)];
+
+%% ---- 画图：3 行 × 2 列，18 × 18 cm ----
+fig = figure('Units','centimeters', 'Position',[1 1 18 18], 'Color','w', ...
+    'PaperUnits','centimeters', 'PaperSize',[18 18], 'PaperPosition',[0 0 18 18]);
+ml = 0.09;  w = 0.40;  gx = 0.09;  h = 0.24;  ys = [0.70 0.39 0.08];
+
+for k = 1:numel(P)
+    ir = ceil(k/2);  ic = mod(k-1, 2) + 1;
+    ax = axes('Position', [ml + (ic-1)*(w+gx), ys(ir), w, h]);  hold(ax, 'on');
+
+    fill(ax, [xgrid fliplr(xgrid)], [P(k).f_pre  zeros(size(xgrid))], c_pre, ...
+        'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    fill(ax, [xgrid fliplr(xgrid)], [P(k).f_post zeros(size(xgrid))], c_post, ...
+        'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    h1 = plot(ax, xgrid, P(k).f_pre,  '-',  'Color', c_pre,  'LineWidth', 1.5);
+    h2 = plot(ax, xgrid, P(k).f_post, '--', 'Color', c_post, 'LineWidth', 1.5);
+    plot(ax, P(k).mu_pre*[1 1],  ylim_all, '-',  'Color', c_pre,  'LineWidth', 1, 'HandleVisibility','off');
+    plot(ax, P(k).mu_post*[1 1], ylim_all, '--', 'Color', c_post, 'LineWidth', 1, 'HandleVisibility','off');
+
+    legend(ax, [h1 h2], ...
+        {sprintf('%s (\\mu=%.3f)', P(k).lab, P(k).mu_pre), ...
+         sprintf('Post-%d (\\mu=%.3f)', split_y, P(k).mu_post)}, ...
+        'Location','northeast', 'Box','off', 'FontSize', fs-1);
+    text(ax, 0.97, 0.60, {sprintf('KS test: {\\itp} = %.3f', P(k).p_ks), ...
+                          sprintf('Rank-sum test: {\\itp} = %.3f', P(k).p_rs)}, ...
+        'Units','normalized', 'HorizontalAlignment','right', 'VerticalAlignment','top', ...
+        'FontSize', fs-1, 'FontName','Helvetica');
+
+    set(ax, 'XLim', [0 0.3], 'XTick', 0:0.05:0.3, 'YLim', ylim_all, ...
+        'TickDir','out', 'FontName','Helvetica', 'FontSize', fs, 'Box','off', 'LineWidth', 0.8);
+    if ir == 3; xlabel(ax, 'G-causality (ENSO\rightarrowIOD)', 'FontSize', fs); end
+    if ic == 1; ylabel(ax, 'Probability Density', 'FontSize', fs); end
+    title(ax, sprintf('(%c) %s', 'a'+k-1, P(k).ttl), 'FontSize', fs, 'FontWeight','bold', ...
+        'Units','normalized', 'Position',[0 1.02 0], 'HorizontalAlignment','left');
+end
+
+exportgraphics(fig, [out_name '.tif'], 'Resolution', 600, 'BackgroundColor','white');
+exportgraphics(fig, [out_name '.png'], 'Resolution', 600, 'BackgroundColor','white');
+fprintf('Saved %s.tif / .png（在当前文件夹 %s）\n', out_name, pwd);
