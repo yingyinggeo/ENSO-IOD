@@ -1,0 +1,806 @@
+%% High/low TSI comparison using the explicitly supplied epochs.
+%
+% High TSI:
+%   850-887, 911-984, 1084-1205,
+%   1355-1381, 1581-1621, 1762-1849 CE
+%
+% Low TSI:
+%   1023-1057, 1278-1341,
+%   1394-1547, 1638-1721 CE
+%
+% Nino3.4:
+%   Regional monthly SSTA.
+%   STD across years within each epoch separately for each
+%   calendar month, then average the 12 monthly STDs.
+%
+% WPWP:
+%   Regional mean SSTA across months and years within each epoch.
+%
+% Sampling:
+%   One value per epoch per ensemble member.
+%   High TSI = 6 epochs x 15 members = 90 samples.
+%   Low TSI  = 4 epochs x 15 members = 60 samples.
+%
+% GC:
+%   Directly calculated within each actual TSI epoch.
+%   One ENSO -> IOD GC value per epoch per ensemble member.
+%
+% Statistics:
+%   Two-sample Student's t-test for all three panels.
+
+%% ================================================================
+% 1. Paths
+% ================================================================
+
+clearvars;
+clc;
+
+% Actual-TSI ENSO -> IOD Granger causality
+GCfile = ...
+    'C:\Users\yingy\Downloads\BigPC_Paleo3\Granger_NINOIOD_actual_TSI_epochs.mat';
+
+% iLME monthly SST anomalies
+sstfile = ...
+    'C:\Users\yingy\Downloads\Data\Paleo3bs_Project\iLME_full_ts_15ens_ano.mat';
+
+% Other supporting data
+data_root = ...
+    'C:\Users\yingy\Downloads\Data\Paleo3bs_Project';
+
+% Script/output directory
+this_dir = ...
+    'C:\Users\yingy\Downloads\BigPC_Paleo3';
+
+addpath(this_dir);
+
+out_dir = fullfile(this_dir,'TSI_threePDF_output');
+
+if ~exist(out_dir,'dir')
+    mkdir(out_dir);
+end
+
+% Check input files
+assert(isfile(GCfile), ...
+    'Cannot find GC file: %s',GCfile);
+
+assert(isfile(sstfile), ...
+    'Cannot find SST file: %s',sstfile);
+
+
+%% ================================================================
+% 2. Load actual-TSI ENSO -> IOD Granger causality
+% ================================================================
+
+fprintf('\nLoading GC from:\n%s\n',GCfile);
+
+G = load(GCfile,'GC_hi','GC_lw');
+
+GC_hi = G.GC_hi(:);
+GC_lw = G.GC_lw(:);
+
+clear G;
+
+GC_hi = GC_hi(isfinite(GC_hi));
+GC_lw = GC_lw(isfinite(GC_lw));
+
+fprintf('\nActual-epoch ENSO -> IOD GC samples:\n');
+fprintf('High TSI = %d\n',numel(GC_hi));
+fprintf('Low  TSI = %d\n',numel(GC_lw));
+
+%% ================================================================
+% 2. Define actual high/low TSI epochs
+%
+% Index 1 = 850 CE
+% ================================================================
+
+low_period_1 = 174:208;   % 1023-1057
+low_period_2 = 429:492;   % 1278-1341
+low_period_3 = 545:698;   % 1394-1547
+low_period_4 = 789:872;   % 1638-1721
+
+hi_period_1 = 1:38;       % 850-887
+hi_period_2 = 62:135;     % 911-984
+hi_period_3 = 235:356;    % 1084-1205
+hi_period_4 = 506:532;    % 1355-1381
+hi_period_5 = 732:772;    % 1581-1621
+hi_period_6 = 913:1000;   % 1762-1849
+
+hi_periods = { ...
+    hi_period_1, ...
+    hi_period_2, ...
+    hi_period_3, ...
+    hi_period_4, ...
+    hi_period_5, ...
+    hi_period_6};
+
+lw_periods = { ...
+    low_period_1, ...
+    low_period_2, ...
+    low_period_3, ...
+    low_period_4};
+
+hi_idx = [hi_periods{:}];
+lw_idx = [lw_periods{:}];
+
+assert(isempty(intersect(hi_idx,lw_idx)), ...
+    'High/low epochs overlap.');
+
+
+%% ================================================================
+% 3. Read regional SST subsets
+% ================================================================
+
+M = matfile(fullfile(data_root,'iLME_full_ts_15ens_ano.mat'));
+
+sz = size(M,'ts_ano');
+
+assert(numel(sz)==5 && ...
+       isequal(sz(1:3),[96 144 12]) && ...
+       sz(4)>=1000, ...
+       'Expected ts_ano: 96 x 144 x 12 x year x member.');
+
+% GC and SST should use the same ensemble count.
+% Expected GC sample counts:
+% High = 6 epochs x nens
+% Low  = 4 epochs x nens
+
+assert(numel(GC_hi)==numel(hi_periods)*sz(5), ...
+    'Unexpected number of valid High-TSI GC samples.');
+
+assert(numel(GC_lw)==numel(lw_periods)*sz(5), ...
+    'Unexpected number of valid Low-TSI GC samples.');
+
+
+%% ================================================================
+% 4. Regional definitions
+% ================================================================
+
+lat = 90-1.875/2 : -1.875 : -90+1.875/2;
+
+lon = -180+2.5/2 : 2.5 : 180-2.5/2;
+
+% 5S-5N
+ilat = find(lat>=-5 & lat<=5);
+
+% Nino3.4
+jN = find(lon>=-170 & lon<=-120);
+
+% WPWP
+jW = find(lon>=120 & lon<=180);
+
+
+%% ================================================================
+% 5. Static ocean mask
+% ================================================================
+
+hadfile = fullfile(data_root,'HadISST_sst.nc');
+
+info = ncinfo(hadfile,'sst');
+
+hlat = double(ncread(hadfile,'latitude'));
+hlon = double(ncread(hadfile,'longitude'));
+
+h = double(ncread( ...
+    hadfile,'sst', ...
+    [1 1 info.Size(3)], ...
+    [Inf Inf 1]));
+
+h(h < -100) = NaN;
+
+[hlon,ix] = sort(mod(hlon+180,360)-180);
+[hlat,iy] = sort(hlat);
+
+h = h(ix,iy)';
+
+[LON,LAT] = meshgrid(lon,lat);
+
+mask = interp2( ...
+    hlon,hlat,double(isfinite(h)), ...
+    LON,LAT,'nearest',0) > .5;
+
+
+%% ================================================================
+% 6. Calculate regional monthly SST anomalies
+% ================================================================
+
+Nino34_monthly = nan(12,1000,sz(5));
+WPWP_monthly   = nan(12,1000,sz(5));
+
+for e = 1:sz(5)
+
+    for region = 1:2
+
+        if region == 1
+            jj = jN;
+        else
+            jj = jW;
+        end
+
+        % Partial MAT v7.3 read
+        A = double(M.ts_ano( ...
+            ilat(1):ilat(end), ...
+            jj(1):jj(end), ...
+            1:12, ...
+            1:1000, ...
+            e));
+
+        % Latitude weighting
+        weights = cosd(lat(ilat(:)));
+        weights = weights(:).*ones(1,numel(jj));
+
+        % Ocean only
+        weights = weights.*mask(ilat,jj);
+
+        w = reshape( ...
+            weights, ...
+            size(weights,1), ...
+            size(weights,2), ...
+            1,1);
+
+        valid = isfinite(A);
+
+        A(~valid) = 0;
+
+        num = squeeze(sum(sum(A.*w,1),2));
+        den = squeeze(sum(sum(valid.*w,1),2));
+
+        monthly = num./den;
+
+        monthly(den==0) = NaN;
+
+        % Remove each calendar month's 850-1849 climatology.
+        % No detrending.
+        monthly = monthly - mean(monthly,2,'omitnan');
+
+        if region == 1
+            Nino34_monthly(:,:,e) = monthly;
+        else
+            WPWP_monthly(:,:,e) = monthly;
+        end
+
+        clear A valid w num den monthly;
+
+    end
+
+    fprintf('Regional series completed: member %d/%d\n', ...
+        e,sz(5));
+
+end
+
+
+%% ================================================================
+% 7. Nino3.4 variability and WPWP SST for each actual TSI epoch
+% ================================================================
+
+Nino34_hi = nan(numel(hi_periods),sz(5));
+Nino34_lw = nan(numel(lw_periods),sz(5));
+
+WPWP_hi = nan(numel(hi_periods),sz(5));
+WPWP_lw = nan(numel(lw_periods),sz(5));
+
+
+for group = 1:2
+
+    if group == 1
+        periods = hi_periods;
+    else
+        periods = lw_periods;
+    end
+
+    for k = 1:numel(periods)
+
+        idx = periods{k};
+
+        for e = 1:sz(5)
+
+            n = Nino34_monthly(:,idx,e);
+            w = WPWP_monthly(:,idx,e);
+
+            % ------------------------------------------------------
+            % Nino3.4 variability
+            %
+            % 1. For each calendar month, STD across years
+            % 2. Average the 12 monthly STDs
+            % ------------------------------------------------------
+
+            nstd = mean( ...
+                std(n,0,2,'omitnan'), ...
+                'omitnan');
+
+            % ------------------------------------------------------
+            % WPWP mean SSTA
+            %
+            % Mean over years and calendar months
+            % ------------------------------------------------------
+
+            wmean = mean( ...
+                mean(w,2,'omitnan'), ...
+                'omitnan');
+
+            if group == 1
+
+                Nino34_hi(k,e) = nstd;
+                WPWP_hi(k,e)   = wmean;
+
+            else
+
+                Nino34_lw(k,e) = nstd;
+                WPWP_lw(k,e)   = wmean;
+
+            end
+
+        end
+    end
+end
+
+
+%% ================================================================
+% 8. Flatten SST samples
+% ================================================================
+
+Nino34_hi_vec = Nino34_hi(:);
+Nino34_lw_vec = Nino34_lw(:);
+
+WPWP_hi_vec = WPWP_hi(:);
+WPWP_lw_vec = WPWP_lw(:);
+
+Nino34_hi_vec = Nino34_hi_vec(isfinite(Nino34_hi_vec));
+Nino34_lw_vec = Nino34_lw_vec(isfinite(Nino34_lw_vec));
+
+WPWP_hi_vec = WPWP_hi_vec(isfinite(WPWP_hi_vec));
+WPWP_lw_vec = WPWP_lw_vec(isfinite(WPWP_lw_vec));
+
+
+%% ================================================================
+% 9. Student's two-sample t-tests
+%
+% H0: mean(high TSI) = mean(low TSI)
+% H1: mean(high TSI) ~= mean(low TSI)
+% ================================================================
+
+% Panel a:
+% ENSO -> IOD Granger causality
+
+[h_GC,p_GC,ci_GC,stats_GC] = ...
+    ttest2(GC_hi,GC_lw,'Vartype','equal');
+
+
+% Panel b:
+% Nino3.4 variability
+
+[h_Nino,p_Nino,ci_Nino,stats_Nino] = ...
+    ttest2(Nino34_hi_vec,Nino34_lw_vec,'Vartype','equal');
+
+
+% Panel c:
+% WPWP SST anomaly
+
+[h_WPWP,p_WPWP,ci_WPWP,stats_WPWP] = ...
+    ttest2(WPWP_hi_vec,WPWP_lw_vec,'Vartype','equal');
+
+
+%% ================================================================
+% 10. Print statistical results
+% ================================================================
+
+fprintf('\n');
+fprintf('====================================================\n');
+fprintf('HIGH vs LOW TSI: Student''s two-sample t-test\n');
+fprintf('====================================================\n');
+
+fprintf('\nPanel a: ENSO -> IOD Granger causality\n');
+fprintf('High mean = %.6f\n',mean(GC_hi,'omitnan'));
+fprintf('Low  mean = %.6f\n',mean(GC_lw,'omitnan'));
+fprintf('t = %.4f\n',stats_GC.tstat);
+fprintf('df = %.0f\n',stats_GC.df);
+fprintf('p = %.6g\n',p_GC);
+
+fprintf('\nPanel b: Nino3.4 variability\n');
+fprintf('High mean = %.6f\n',mean(Nino34_hi_vec,'omitnan'));
+fprintf('Low  mean = %.6f\n',mean(Nino34_lw_vec,'omitnan'));
+fprintf('t = %.4f\n',stats_Nino.tstat);
+fprintf('df = %.0f\n',stats_Nino.df);
+fprintf('p = %.6g\n',p_Nino);
+
+fprintf('\nPanel c: WPWP SSTA\n');
+fprintf('High mean = %.6f\n',mean(WPWP_hi_vec,'omitnan'));
+fprintf('Low  mean = %.6f\n',mean(WPWP_lw_vec,'omitnan'));
+fprintf('t = %.4f\n',stats_WPWP.tstat);
+fprintf('df = %.0f\n',stats_WPWP.df);
+fprintf('p = %.6g\n',p_WPWP);
+
+fprintf('====================================================\n');
+
+
+%% ================================================================
+% 11. Save samples and t-test results
+% ================================================================
+
+years = (850:1849)';
+
+save(fullfile(out_dir,'TSI_regional_PDF_samples.mat'), ...
+    'years', ...
+    'hi_periods','lw_periods','hi_idx','lw_idx', ...
+    'Nino34_monthly','WPWP_monthly', ...
+    'GC_hi','GC_lw', ...
+    'Nino34_hi','Nino34_lw', ...
+    'WPWP_hi','WPWP_lw', ...
+    'p_GC','p_Nino','p_WPWP', ...
+    'h_GC','h_Nino','h_WPWP', ...
+    'stats_GC','stats_Nino','stats_WPWP');
+
+
+fprintf('\nPDF sample sizes:\n');
+fprintf('GC:      %d high, %d low\n', ...
+    numel(GC_hi),numel(GC_lw));
+
+fprintf('Nino3.4: %d high, %d low\n', ...
+    numel(Nino34_hi_vec),numel(Nino34_lw_vec));
+
+fprintf('WPWP:    %d high, %d low\n', ...
+    numel(WPWP_hi_vec),numel(WPWP_lw_vec));
+
+
+%% ================================================================
+% 12. Plot
+%
+% Pass t-test p-values explicitly to plotting function.
+% ================================================================
+%% ================================================================
+% 16. Plot three PDFs directly
+% ================================================================
+
+D = { ...
+    GC_hi, GC_lw; ...
+    Nino34_hi, Nino34_lw; ...
+    WPWP_hi, WPWP_lw};
+
+titles = { ...
+    'Change in Interaction Strength', ...
+    'Change in Nino3.4 SSTA Std.', ...
+    'Change in WPWP SSTA'};
+
+labels = { ...
+    'G-causality', ...
+    'Nino3.4 SSTA std. (\circC)', ...
+    'WPWP SSTA (\circC)'};
+
+xlims = { ...
+    [0 0.15], ...
+    [0.5 1.5], ...
+    [-0.5 0.5]};
+
+ymax = [40 6 10];
+
+hi_color = [1 0.5 0];
+lo_color = [1 0.82 0.57];
+
+
+%% Create figure
+
+fig = figure( ...
+    'Units','centimeters', ...
+    'Position',[2 2 18 7], ...
+    'Color','w', ...
+    'PaperUnits','centimeters', ...
+    'PaperPosition',[0 0 18 7]);
+
+
+%% Panel positions
+
+pos = [ ...
+    0.075 0.22 0.235 0.60; ...
+    0.405 0.22 0.235 0.60; ...
+    0.735 0.22 0.235 0.60];
+
+
+%% ================================================================
+% Loop over three panels
+% ================================================================
+
+for k = 1:3
+
+    % -------------------------------------------------------------
+    % Extract high / low TSI samples
+    % -------------------------------------------------------------
+
+    a = D{k,1}(:);
+    b = D{k,2}(:);
+
+    a = a(isfinite(a));
+    b = b(isfinite(b));
+
+
+    assert( ...
+        numel(a) > 1 && ...
+        numel(b) > 1 && ...
+        std(a) > 0 && ...
+        std(b) > 0, ...
+        'Panel %d has insufficient valid samples.',k);
+
+
+    % -------------------------------------------------------------
+    % Student's two-sample t-test
+    %
+    % Vartype = equal:
+    % classical Student's t-test
+    % -------------------------------------------------------------
+
+    [h,ptt,ci,stats] = ttest2( ...
+        a, ...
+        b, ...
+        'Vartype','equal');
+
+
+    % -------------------------------------------------------------
+    % Print results
+    % -------------------------------------------------------------
+
+    fprintf('\n');
+    fprintf('============================================\n');
+    fprintf('Panel %c\n',char('a'+k-1));
+    fprintf('============================================\n');
+
+    fprintf( ...
+        'n(high/low) = %d / %d\n', ...
+        numel(a),numel(b));
+
+    fprintf( ...
+        'High TSI mean = %.6f\n', ...
+        mean(a,'omitnan'));
+
+    fprintf( ...
+        'Low TSI mean  = %.6f\n', ...
+        mean(b,'omitnan'));
+
+    fprintf( ...
+        'High TSI std  = %.6f\n', ...
+        std(a,'omitnan'));
+
+    fprintf( ...
+        'Low TSI std   = %.6f\n', ...
+        std(b,'omitnan'));
+
+    fprintf( ...
+        'Student''s t = %.4f\n', ...
+        stats.tstat);
+
+    fprintf( ...
+        'df = %.0f\n', ...
+        stats.df);
+
+    fprintf( ...
+        'p = %.8g\n', ...
+        ptt);
+
+    fprintf( ...
+        '95%% CI of mean difference = [%.6f, %.6f]\n', ...
+        ci(1),ci(2));
+
+
+    % -------------------------------------------------------------
+    % X limits
+    % -------------------------------------------------------------
+
+    lim = xlims{k};
+
+    datalo = min([a;b]);
+    datahi = max([a;b]);
+
+
+    % Panel c:
+    % expand limits if necessary
+    if k == 3 && ...
+            (datalo < lim(1) || datahi > lim(2))
+
+        pad = 0.05 * max(datahi-datalo,eps);
+
+        lim = [ ...
+            min(lim(1),datalo-pad), ...
+            max(lim(2),datahi+pad)];
+
+    end
+
+
+    % -------------------------------------------------------------
+    % Normal PDF
+    % -------------------------------------------------------------
+
+    x = linspace( ...
+        lim(1), ...
+        lim(2), ...
+        1500);
+
+
+    dist_hi = fitdist(a,'normal');
+    dist_lw = fitdist(b,'normal');
+
+
+    f_hi = pdf(dist_hi,x);
+    f_lw = pdf(dist_lw,x);
+
+
+    % -------------------------------------------------------------
+    % Axes
+    % -------------------------------------------------------------
+
+    ax = axes( ...
+        fig, ...
+        'Position',pos(k,:));
+
+    hold(ax,'on');
+
+
+    % -------------------------------------------------------------
+    % PDFs
+    % -------------------------------------------------------------
+
+    plot( ...
+        ax, ...
+        x, ...
+        f_hi, ...
+        'Color',hi_color, ...
+        'LineWidth',1.1);
+
+
+    plot( ...
+        ax, ...
+        x, ...
+        f_lw, ...
+        'Color',lo_color, ...
+        'LineWidth',1.1);
+
+
+    % -------------------------------------------------------------
+    % Axes formatting
+    % -------------------------------------------------------------
+
+    set( ...
+        ax, ...
+        'FontName','Arial', ...
+        'FontSize',10, ...
+        'Box','on', ...
+        'TickDir','out', ...
+        'LineWidth',0.6, ...
+        'XLim',lim, ...
+        'YLim',[0 ymax(k)]);
+
+
+    xlabel( ...
+        ax, ...
+        labels{k}, ...
+        'FontSize',10, ...
+        'Interpreter','tex');
+
+
+    ylabel( ...
+        ax, ...
+        'Density', ...
+        'FontSize',10);
+
+
+    title( ...
+        ax, ...
+        titles{k}, ...
+        'FontSize',10, ...
+        'FontWeight','bold');
+
+
+    % -------------------------------------------------------------
+    % a / b / c
+    % -------------------------------------------------------------
+
+    text( ...
+        ax, ...
+        0.035, ...
+        0.97, ...
+        char('a'+k-1), ...
+        'Units','normalized', ...
+        'FontSize',10, ...
+        'FontWeight','bold', ...
+        'VerticalAlignment','top');
+
+
+    % -------------------------------------------------------------
+    % Manual legend
+    % -------------------------------------------------------------
+
+    cols = {hi_color,lo_color};
+
+    names = { ...
+        'High TSI Period', ...
+        'Low TSI Period'};
+
+
+    yl = ylim(ax);
+    xl = xlim(ax);
+
+
+    for j = 1:2
+
+        y = 0.92-(j-1)*0.11;
+
+
+        plot( ...
+            ax, ...
+            xl(1)+[0.15 0.24]*diff(xl), ...
+            [y y]*yl(2), ...
+            'Color',cols{j}, ...
+            'LineWidth',1.1);
+
+
+        text( ...
+            ax, ...
+            0.29, ...
+            y, ...
+            names{j}, ...
+            'Units','normalized', ...
+            'Color',cols{j}, ...
+            'FontSize',10, ...
+            'VerticalAlignment','middle');
+
+    end
+
+
+    % -------------------------------------------------------------
+    % Student's t-test p value
+    % -------------------------------------------------------------
+
+    if ptt < 0.001
+
+        ptxt = 'p < 0.001';
+
+    else
+
+        ptxt = sprintf( ...
+            'p = %.3f', ...
+            ptt);
+
+    end
+
+
+    text( ...
+        ax, ...
+        0.87, ...
+        0.65, ...
+        ptxt, ...
+        'Units','normalized', ...
+        'FontSize',10, ...
+        'FontAngle','italic', ...
+        'HorizontalAlignment','right');
+
+end
+
+
+%% ================================================================
+% 17. Export
+% ================================================================
+
+outfile_tif = fullfile( ...
+    out_dir, ...
+    'TSI_Interaction_Nino34_WPWP_PDF.tif');
+
+
+outfile_png = fullfile( ...
+    out_dir, ...
+    'TSI_Interaction_Nino34_WPWP_PDF.png');
+
+
+exportgraphics( ...
+    fig, ...
+    outfile_tif, ...
+    'Resolution',600);
+
+
+exportgraphics( ...
+    fig, ...
+    outfile_png, ...
+    'Resolution',600);
+
+
+fprintf('\n============================================\n');
+fprintf('Figure completed successfully.\n');
+fprintf('============================================\n');
+
+fprintf('\nTIF:\n%s\n',outfile_tif);
+fprintf('\nPNG:\n%s\n',outfile_png);
